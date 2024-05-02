@@ -1,0 +1,229 @@
+
+# until protocol line, all of these are my declarations
+
+usertype KGC, SM, PDA, CC; 
+
+inversekeys(pk,sk);
+
+hashfunction h1,h2;
+
+secret Concat: Function; # secret decalarations
+
+secret secKey: Function; 
+
+secret HEC: Function;
+
+secret dot: Function;
+
+secret add: Function;
+
+secret Aggregate: Function;
+
+secret Approved: Function;
+
+secret Terminate:Function;
+
+secret divisor, IDsm,IDpda,IDcc,sign,n,pvnm,SMpvt; # identity of Smart Meter, Power Data Aggregator and Control Center
+                                                                      
+
+const val,m;
+protocol HomomorphicSigncryption(KGC, SM,PDA, CC) # start of the protocol body
+
+{
+
+    role KGC
+
+    {
+
+# nonce declaration, random number used once 
+    fresh val: Nonce; # fresh indicating that it is a new value
+    fresh SMpvt: Nonce; # SMpvt is a nonce which has the value of smart meter private key
+    fresh SMpbk: Nonce; # SMpbk is a nonce which has the value of smart meter public key
+    fresh PDApvt: Nonce; 
+    fresh PDApbk: Nonce;
+    fresh CCpvt: Nonce;
+    fresh CCpbk: Nonce;
+
+# macro construct is used when there are sequence of operations performed 
+    macro KGCpvt = HEC(val); # creating KGC private key
+    macro KGCpbk = dot(KGCpvt,divisor); # creating KGC public key
+
+# from this line creating Smart Meter private and public key
+   macro val2=add(IDsm,KGCpvt); 
+   macro SMpvt' = h1(val2);
+   macro SMpbk'=dot(SMpvt',divisor);
+
+# we cannot transmit macro because it is not data type, so this is the reason for creating fresh nonce
+       # matching the value of the above computation, SMpvt' -> SMpvt, both will have the same result
+   match(SMpvt,SMpvt'); 
+   match(SMpbk,SMpbk');
+
+# same mechanism is being performed, before it was generation for Smart Meter private and public key, 
+										     # here it is for Power Data Aggregator keys
+   macro val3=add(IDpda,KGCpvt);
+   macro PDApvt'= h1(val3);
+   macro PDApbk'=dot(PDApvt',divisor);
+
+   match(PDApvt,PDApvt'); 
+   match(PDApbk,PDApbk');
+
+   macro val4=add(IDcc,KGCpvt);
+   macro CCpvt' = h1(val4);
+   macro CCpbk'=dot(CCpvt',divisor);
+
+   match(CCpvt,CCpvt');
+   match(CCpbk,CCpbk');
+
+# sending role, KGC is sending a message -> SM/PDA/CC, it's private and public key 
+    send_1(KGC,SM,SMpvt,SMpbk); 
+    send_2(KGC,PDA,PDApvt,PDApbk); 
+    send_3(KGC,CC,CCpvt,CCpbk); 
+
+}
+
+    role SM
+
+{
+
+# private number, number used once, message, cipher text, unique hash value and signature of the entity
+   fresh pvnm: Nonce;
+   fresh n: Nonce;
+   fresh m: Nonce;
+   fresh C: Nonce;
+   fresh u: Nonce;
+   fresh sign: Nonce;
+
+# using variable data type to store those fresh nonces, to recieve/store the values down below
+  var SMpvt;
+  var SMpbk;
+
+# here is the recieving event
+     recv_1(KGC,SM,SMpvt,SMpbk); 
+
+# singcryption phase will start
+macro z = dot(pvnm,divisor); # z = L x w
+macro k= dot(pk(CC),pvnm); # generating secret key -> public key of CC x privet random number
+   fresh n: Nonce; 
+not match (n,n); # here not matched is used to make sure that previous created n value and later
+											      # created values are not similar
+macro msg=Concat(m,n); 
+macro C'={msg}k(SM,CC); # the message the was created above is being encrypted with key
+macro u'=h2(msg); # unique hash value is created by applying hash function h2 on message
+macro sign'=dot(SMpvt,z); # signature is created by multiplying SM private key with the value z
+
+# as mentioned before, cannot send macro in message, so nonce C/u/sign is created and the
+				    # macro C which has cipher text result is stored in nonce C
+  match(C,C');
+  match(u,u');
+  match(sign,sign');
+  match(SMpbk,pk(SM)); # says smart meter publc key SMpbk and pk(SM) have same value
+
+    send_4(SM,PDA,C,u,sign); # Smart Meter will send it's message to Power Data Aggregator
+
+      claim (SM, Secret, C) ;
+      claim (SM, Secret, u) ;
+      claim (SM, Commit,PDA,sign) ;
+      claim (SM, Alive ) ;
+      claim (SM, Nisynch );
+      claim(SM,Niagree);
+      claim(SM,Weakagree);
+      claim(SM,Secret,k(SM,CC));
+
+}
+
+    role PDA
+
+{
+
+# whenever nonce is used, variable of same name are used to store those nonce
+var PDApvt;
+var PDApbk;
+var C;
+var u;
+var sign;
+
+    recv_2(KGC,PDA,PDApvt,PDApbk); # receiving message from KGC which has PDA private and public key
+    recv_4(SM,PDA,C,u,sign);       # message from smart meter, in the message cipher text, signature and
+									             # unique hash value u nonces are present
+
+
+# data aggregation starts
+   macro batchver = Aggregate(pk(SM)); # applying aggregate function to aggregate all the values
+                                              # of unique hash values u' received from different smart meters
+    fresh sign';
+    fresh C';
+    fresh u';
+    match (C',C);
+    match (u',u); 
+    match (sign',sign); 
+
+# aggregating all the values of unique hash values/cipher texts/signatures
+                                                 # recieved from different Smart Meters    
+      
+      macro Ag-u= Aggregate(u'); 
+      macro Ag-C = Aggregate(C');
+      not match(C',C'); # with this it makes sure that each cipher text receiver is not considered 
+				        # simmilar, because every cipher text will be dissimilar to another
+
+      macro Ag-sign= Aggregate(sign');
+      fresh Ag'C;
+      fresh Ag'u;
+      fresh Ag'sign;
+      match (Ag'u,Ag-u);
+      match (Ag'C,Ag-C); 
+      match (Ag'sign,Ag-sign); 
+
+# The message is sent from Power Data Aggregator -> Control Center, message contains
+                                                             # aggregation of cipher text/hash/signature
+
+    send_5(PDA,CC,Ag'C ,Ag'u,Ag'sign); 
+
+      claim (PDA, Secret, C) ;
+      claim (PDA, Secret, u) ;
+      claim (PDA, Secret, Ag'C) ;
+      claim (PDA, Secret, Ag'u) ;
+      claim (PDA, Running,SM,sign) ;
+      claim (PDA, Commit,CC,Ag'sign) ;
+      claim (PDA, Alive ) ;
+      claim (PDA, Nisynch );
+      claim(PDA,Niagree);
+      claim(PDA,Weakagree);
+
+} 
+
+    role CC
+
+{
+var CCpvt;
+var CCpbk;
+var Ci;
+var ui;
+var signi;
+var Ag'u;
+var Ag'sign;
+var Ag'C;
+    recv_3(KGC, CC,CCpvt,CCpbk); 
+    recv_5(PDA,CC,Ag'C ,Ag'u,Ag'sign); # receives the messages from Power Data Aggregator, and
+                                                     # the message has aggregated cipher text/hash/signature
+
+# creating a value called signx which is for verification purpose to ensure signx result 
+										  # mathes the signature
+
+    macro signx = dot(pk(SM),pvnm);
+    match(sign,signx); # now matching if both values have same result
+    macro decrypt={Ag'C}k(SM,CC); # decrypting the aggregated cipher text using symmetric key
+
+     claim (CC, Secret, Ag'C) ; # secret claim, checks if it is confidential and secure
+     claim (CC, Secret, Ag'u) ;
+     claim (CC, Running,SM,sign); # makes sures it recieves event from an active party
+     claim (CC, Commit,PDA,Ag'sign) ; # commit is a claim, it ensure that aggregation of signature is finalised and will not change its value
+     claim (CC, Alive) ; 
+     claim (CC, Nisynch);
+     claim (CC,Niagree);
+     claim (CC,Weakagree);
+     claim(CC,Secret,k(SM,CC)); # checks if the secret key between SM and CC is secret
+
+}
+
+}
+
